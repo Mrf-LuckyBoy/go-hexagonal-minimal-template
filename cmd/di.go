@@ -34,7 +34,5 @@ func BuildContainer(cfg *config.Config) *Container {
 
 	fmt.Println(bookService)
 
-	fmt.Println("kuykuykuy")
-
 	return nil
 }
