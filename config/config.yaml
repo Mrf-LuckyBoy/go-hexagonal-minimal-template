@@ -1,0 +1,14 @@
+app:
+  name: myapp
+  port: 8080
+  env: dev
+  encryptkey: ""
+
+database:
+  host: localhost
+  port: 5432
+  user: admin
+  password: ""   # NEVER store real password here
+
+server:
+  timeout: 30s
