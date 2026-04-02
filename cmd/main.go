@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template/internal/config"
 	"github.com/joho/godotenv"
 )
@@ -18,8 +16,4 @@ func main() {
 	}
 
 	BuildContainer(cfg)
-
-	fmt.Println(cfg.App.EncryptKey)
-
-	fmt.Println("hello world")
 }
