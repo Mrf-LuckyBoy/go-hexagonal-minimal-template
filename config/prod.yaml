@@ -1,5 +1,2 @@
 app:
   env: prod
-
-database:
-  host: prod-db.mycompany.com

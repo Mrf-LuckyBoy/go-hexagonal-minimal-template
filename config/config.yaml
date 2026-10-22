@@ -1,14 +1,16 @@
 app:
   name: myapp
-  port: 8080
   env: dev
-  encryptkey: ""
+  shutdowntimeout: 10s   # max time for servers and resources to stop
 
-database:
-  host: localhost
-  port: 5432
-  user: admin
-  password: ""   # NEVER store real password here
-
-server:
-  timeout: 30s
+# Add one section per adapter, plus a matching struct in internal/config/schema.go.
+# Secrets stay empty here and are set via environment variables. Examples:
+#
+# http:
+#   port: 8080
+#   timeout: 30s
+#
+# redis:
+#   addr: localhost:6379
+#   password: ""   # set via REDIS_PASSWORD
+#   db: 0

@@ -1,328 +1,192 @@
-# go-hexagonal-minal-template
+# go-hexagonal-minimal-template
 
-A minimal, production-ready Go project template following **Hexagonal Architecture** (also known as Ports & Adapters). Designed to help you bootstrap new Go services quickly with a clean, testable, and maintainable structure.
+A **bare** Go service skeleton following **Hexagonal Architecture** (Ports & Adapters). It doesn't pick a framework for you. Plug in **any** HTTP framework (net/http, Gin, Echo, Fiber, gRPC) and **any** infrastructure (PostgreSQL, Redis, MinIO, Kafka, ...) as adapters, without touching your business logic.
 
---- 
+The base has only two dependencies: [Viper](https://github.com/spf13/viper) (config) and [godotenv](https://github.com/joho/godotenv) (local `.env`). Everything else is opt-in.
+
+---
 
 ## Features
-- **Hexagonal Architecture** — clear separation between core business logic and external dependencies
-- **Dependency Injection** — wired manually via `cmd/di.go` for full transparency and control
-- **Config Management** — environment-aware YAML config powered by [Viper](https://github.com/spf13/viper)
-- **SQLite + GORM** — included as a working database adapter out of the box (easy to swap, this for sample you can remove it and replace it what driver you use maridb, postgresql)
-- **Auto Migration** — GORM auto-migrates domain models on startup
-- **`.env` support** — secrets loaded from `.env` via `godotenv`
+
+- **Hexagonal skeleton**: `core/` (domain, ports, services) is kept separate from `adapters/`, with doc files that explain what goes where
+- **Lifecycle manager** (`internal/platform/lifecycle`): any framework, worker or consumer plugs in as a `Server`; any resource registers cleanup with `OnStop`
+- **Graceful shutdown**: on `SIGINT`/`SIGTERM`, servers stop in reverse order, then resources close, all within a configurable timeout. If one server crashes, everything else shuts down cleanly.
+- **Layered config**: base YAML → environment YAML → environment variables
+- **Structured logging** with `log/slog` (text in dev, JSON otherwise)
+- **Shared domain errors** (`ErrNotFound`, `ErrInvalidInput`, `ErrConflict`) for consistent error mapping across adapters
+- **Tooling**: `Makefile`, `golangci-lint` config, `Dockerfile` (distroless, non-root) and GitHub Actions CI
+- **[Recipes](docs/recipes.md)**: tested, copy-paste adapters for **net/http, Gin, Echo, Fiber, workers, PostgreSQL, Redis and MinIO**
 
 ---
 
 ## 📁 Project Structure
- 
+
 ```
-go-hexagonal-minimal-template/
+.
 ├── cmd/
-│   ├── main.go          # Entry point — loads config, bootstraps DI container
-│   └── di.go            # Dependency injection — wires repos, services, handlers
+│   ├── main.go                   # Entry point: .env, config, logger, signals, run
+│   └── di.go                     # Composition root: wire adapters → services → servers
 │
 ├── config/
-│   ├── config.yaml      # Base configuration
-│   ├── dev.yaml         # Development overrides
-│   └── prod.yaml        # Production overrides
+│   ├── config.yaml               # Base configuration
+│   ├── dev.yaml                  # Overrides when APP_ENV=dev
+│   └── prod.yaml                 # Overrides when APP_ENV=prod
 │
 ├── internal/
-│   ├── config/
-│   │   ├── config.go    # Config loader (Viper)
-│   │   └── schema.go    # Config struct definitions
+│   ├── config/                   # Config loader (Viper) + schema
 │   │
-│   └── core/                        # ← The Hexagon (pure business logic)
-│       ├── domain/
-│       │   ├── model/               # Domain entities / DB models
-│       │   │   └── book.go
-│       │   └── dto/                 # Data Transfer Objects
-│       │       └── book.go
-│       ├── port/                    # Interfaces (contracts)
-│       │   ├── book_repository.go   # Driven port (storage)
-│       │   └── book_service.go      # Driving port (use cases)
-│       └── service/                 # Business logic implementations
-│           └── book_service.go
+│   ├── core/                     # ← The Hexagon: business logic, standard library only
+│   │   ├── domain/               # Entities, value objects, domain errors
+│   │   ├── port/                 # Interfaces: driving (use cases) + driven (dependencies)
+│   │   └── service/              # Use-case implementations
+│   │
+│   ├── adapters/                 # ← Adapters: frameworks & infrastructure (empty, add your own)
+│   │
+│   └── platform/
+│       └── lifecycle/            # Start/stop servers & resources, graceful shutdown
 │
-└── internal/adapters/               # ← The Adapters (infrastructure)
-    └── repository/
-        └── sqliter/                 # SQLite adapter (implements BookRepository)
-            └── book_repository_sqlite.go
+├── docs/recipes.md               # Gin / Echo / Fiber / Redis / MinIO / PostgreSQL / worker
+├── Dockerfile
+├── Makefile
+└── .golangci.yml
 ```
 
+`core/` and `adapters/` start empty. Each folder has a `doc.go` that explains what belongs there, with examples.
+
 ---
- 
-## 🏛️ Architecture Overview
- 
-This template follows **Hexagonal Architecture**, which keeps your core business logic completely isolated from frameworks, databases, and delivery mechanisms.
- 
+
+## 🏛️ Architecture
+
 ```
-                    ┌─────────────────────────────┐
-                    │         Core (Hexagon)        │
-                    │                               │
-  [Driving Ports]   │  port.BookService  (interface)│
-  e.g. HTTP, CLI ──►│  service.bookService (impl)   │
-                    │                               │
-                    │  port.BookRepository(interface)│──► [Driven Ports]
-                    │                               │     e.g. SQLite, Postgres
-                    └─────────────────────────────┘
+       Driving adapters                  Core                     Driven adapters
+   ┌────────────────────┐    ┌──────────────────────────┐    ┌────────────────────┐
+   │ net/http · Gin     │    │  port (driving)          │    │ PostgreSQL · GORM  │
+   │ Echo · Fiber       │───►│      ▲                   │    │ Redis              │
+   │ gRPC · consumers   │    │  service ─► port (driven)│◄───│ MinIO / S3         │
+   │ cron · CLI         │    │      │                   │    │ external APIs      │
+   └────────────────────┘    │  domain (+ errors)       │    └────────────────────┘
+            ▲                └──────────────────────────┘              ▲
+            │                                                         │
+            └────────────── cmd/di.go wires everything ────────────────┘
+                     platform/lifecycle starts & stops it all
 ```
- 
-- **Ports** (`internal/core/port/`) — interfaces that define *what* the core needs, not *how* it gets it
-- **Adapters** (`internal/adapters/`) — concrete implementations of those ports (databases, HTTP handlers, etc.)
-- **Services** (`internal/core/service/`) — pure business logic that depends only on port interfaces
- 
-This means you can **swap SQLite for PostgreSQL**, or add an HTTP handler, without touching any business logic.
- 
+
+**Rules**
+1. `core/` imports only the standard library and other `core/` packages. No frameworks, no drivers, no struct tags.
+2. The core **owns** the ports. Adapters implement driven ports, and driving adapters call driving ports.
+3. Adapters never import each other. Only `cmd/di.go` knows about concrete types.
+4. Adapters translate infrastructure errors into domain errors at the boundary (e.g. `redis.Nil` → `domain.ErrNotFound`). Driving adapters map domain errors to responses (e.g. `ErrNotFound` → 404).
+5. Every port method takes `context.Context` first.
+
+---
+
+## ♻️ Lifecycle: plugging in anything
+
+```go
+// internal/platform/lifecycle
+type Server interface {
+    Start(ctx context.Context) error    // block until stopped; ctx is cancelled on shutdown
+    Shutdown(ctx context.Context) error // stop gracefully before ctx expires
+}
+
+app := lifecycle.New(logger, cfg.App.ShutdownTimeout)
+app.OnStop("redis", func(context.Context) error { return rdb.Close() }) // resources
+app.AddServer("http", lifecycle.NewHTTPServer(":8080", router, 30*time.Second))
+app.AddServer("consumer", myConsumer)                               // anything with Start/Shutdown
+return app.Run(ctx)
+```
+
+| You have | How it plugs in |
+|---|---|
+| Any `http.Handler`: net/http, **Gin**, **Echo**, Chi | `lifecycle.NewHTTPServer(addr, handler, timeout)` |
+| A framework not based on `net/http`: **Fiber**, gRPC | Implement `Server` (2 methods). See [recipes](docs/recipes.md#http-fiber). |
+| A worker, cron job or queue consumer (Kafka, RabbitMQ, NATS) | Implement `Server`, looping until `ctx` is done |
+| A resource to close: DB pool, **Redis**, file handles | `app.OnStop(name, fn)` |
+
+**Shutdown order:** servers stop in reverse registration order, then `OnStop` hooks run in reverse order (like `defer`), all within `app.shutdowntimeout`.
+
+---
 
 ## 🚀 Getting Started
- 
-### Prerequisites
- 
-- Go 1.21+
-- GCC (required for `go-sqlite3` CGO compilation)
- 
-### 1. Clone the template
- 
+
+**Prerequisites:** Go 1.26+, and optionally [golangci-lint](https://golangci-lint.run/) v2 and Docker.
+
 ```bash
-git clone https://github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template.git
-cd go-hexagonal-minimal-template
+git clone https://github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template.git my-service
+cd my-service
+cp .env.example .env   # optional
+make run
 ```
- 
-### 2. Set up environment variables
- 
-```bash
-cp .env.example .env
-# Edit .env and fill in your secrets
+
+The bare skeleton starts, warns `no servers registered`, and exits. That's expected. Add your first adapter in `cmd/di.go` and it will keep running until it receives a shutdown signal.
+
 ```
- 
-### 3. Configure the app
- 
-Edit `config/config.yaml` for base settings, or `config/dev.yaml` / `config/prod.yaml` for environment-specific overrides:
- 
-```yaml
-app:
-  name: myapp
-  port: 8080
-  env: dev
-  encryptkey: ""
- 
-database:
-  host: localhost
-  port: 5432
-  user: admin
-  password: ""  # Use .env for secrets
- 
-server:
-  timeout: 30s
+make run           # run locally
+make test          # tests with -race and coverage
+make lint          # golangci-lint
+make fmt           # gofmt + goimports
+make build         # static binary in bin/
+make docker-build  # build the Docker image
 ```
- 
-### 4. Run
- 
-```bash
-go run ./cmd/...
-```
- 
+
 ---
- 
+
+## 🔌 Adding a Feature
+
+1. **Domain:** `internal/core/domain/order.go`, plain structs.
+2. **Ports:** `internal/core/port/order.go`, with a driving `OrderService` and a driven `OrderRepository`.
+3. **Service:** `internal/core/service/order_service.go`, plus a unit test using an in-memory fake of the driven port.
+4. **Adapters:** e.g. `internal/adapters/repository/postgres/` and `internal/adapters/handler/gin/`.
+5. **Config:** add sections to `internal/config/schema.go` and `config/config.yaml`.
+6. **Wire** it in `cmd/di.go`.
+
+[docs/recipes.md](docs/recipes.md) walks through all of this with complete code, including a full `di.go` that uses PostgreSQL, Redis, MinIO, Gin and a background worker.
+
+---
+
 ## ⚙️ Configuration
- 
-Configuration is loaded via [Viper](https://github.com/spf13/viper) and supports layered overrides:
- 
-| File | Purpose |
-|------|---------|
-| `config/config.yaml` | Base defaults |
-| `config/dev.yaml` | Development overrides |
-| `config/prod.yaml` | Production overrides |
-| `.env` | Secret values (never commit this) |
- 
-The config schema is defined in `internal/config/schema.go`:
- 
-```go
-type Config struct {
-    App      App      // name, port, env, encryptkey
-    Database Database // host, port, user, password
-    Server   Server   // timeout
-}
-```
- 
+
+Layers, each overriding the previous one:
+
+1. `config/config.yaml`: base defaults
+2. `config/<APP_ENV>.yaml`: e.g. `APP_ENV=prod` loads `config/prod.yaml`
+3. **Environment variables**: `UPPER_SNAKE_CASE` of the key, e.g. `redis.password` → `REDIS_PASSWORD`
+
+A `.env` file is loaded if one exists. It's for local development only: **never commit it**. In production, use real environment variables or a secret manager.
+
+> ⚠️ An environment variable only overrides a key that **already exists in the YAML**. Add an empty placeholder for every secret in `config/config.yaml`.
+
 ---
- 
-## 🔌 Adding a New Feature
- 
-### 1. Define your domain model
- 
-```go
-// internal/core/domain/model/user.go
-type User struct {
-    ID        string
-    Email     string
-    CreatedAt time.Time
-}
-```
- 
-### 2. Define port interfaces
- 
-```go
-// internal/core/port/user_repository.go
-type UserRepository interface {
-    Create(user *model.User) error
-    GetByID(id string) (*model.User, error)
-}
-```
- 
-### 3. Implement the service
- 
-```go
-// internal/core/service/user_service.go
-type userService struct {
-    repo port.UserRepository
-}
-func NewUserService(repo port.UserRepository) port.UserService { ... }
-```
- 
-### 4. Implement the adapter
- 
-```go
-// internal/adapters/repository/sqliter/user_repository_sqlite.go
-type UserRepositorySqlite struct { db *gorm.DB }
-func (r *UserRepositorySqlite) Create(user *model.User) error { ... }
-```
- 
-### 5. Wire it in DI
- 
-```go
-// cmd/di.go
-userRepo := sqliter.NewUserRepositorySqlite(db)
-userService := service.NewUserService(userRepo)
-```
- 
----
- 
-## 🔄 Swapping the Database
- 
-Since the repository is behind a port interface, swapping databases only requires a new adapter:
- 
-```bash
-# Example: Add a PostgreSQL adapter
-mkdir -p internal/adapters/repository/postgres
-```
- 
-```go
-// internal/adapters/repository/postgres/book_repository_postgres.go
-type BookRepositoryPostgres struct { db *gorm.DB }
-// implement port.BookRepository interface...
-```
- 
-Then update `cmd/di.go` to use the new adapter — no changes needed in service or domain layers.
- 
----
- 
+
 ## 🛠️ Using This Template
- 
-After cloning, follow these steps to make the project your own.
- 
-### 1. Rename the Go Module
- 
-The default module name is `github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template`. Replace it with your own:
- 
-**Update `go.mod`:**
- 
-```go
-// before
-module github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template
- 
-// after
-module github.com/YourUsername/your-project-name
-```
- 
-**Replace all import paths in one command (Linux):**
- 
+
+### Rename the Go module
+
 ```bash
-find . -type f -name "*.go" | xargs sed -i \
-  's|github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template|github.com/YourUsername/your-project-name|g'
+OLD=github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template
+NEW=github.com/YourUsername/your-project-name
+
+go mod edit -module "$NEW"
+# Linux (macOS: use sed -i '' instead)
+grep -rl "$OLD" --include='*.go' --include='*.md' --include='.golangci.yml' . | xargs sed -i "s|$OLD|$NEW|g"
+
+grep -r "$OLD" . --exclude-dir=.git   # should print nothing
+go mod tidy && go build ./... && go test ./...
 ```
- 
-> **macOS** — `sed -i` requires an empty string argument:
-> ```bash
-> find . -type f -name "*.go" | xargs sed -i '' \
->   's|github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template|github.com/YourUsername/your-project-name|g'
-> ```
- 
-**Verify no old references remain:**
- 
-```bash
-grep -r "Mrf-LuckyBoy/go-hexagonal-minimal-template" --include="*.go" .
-go mod tidy && go build ./...
-```
- 
+
+Then update the `LICENSE` holder, `app.name` in `config/config.yaml`, and this README.
+
 ---
- 
-### 2. Remove the SQLite Sample Code
- 
-SQLite and the `Book` domain are included only as a working example. Remove them when starting your real project:
- 
-**Delete the sample files:**
- 
-```bash
-rm -rf internal/adapters/repository/sqliter/
-rm internal/core/domain/model/book.go
-rm internal/core/domain/dto/book.go
-rm internal/core/port/book_repository.go
-rm internal/core/port/book_service.go
-rm internal/core/service/book_service.go
-```
- 
-**Strip `cmd/di.go` back to a clean skeleton:**
- 
-```go
-package main
- 
-import "github.com/YourUsername/your-project-name/internal/config"
- 
-type Container struct{}
- 
-func BuildContainer(cfg *config.Config) *Container {
-    // wire your own repos and services here
-    return &Container{}
-}
-```
- 
-**Remove SQLite dependencies:**
- 
-```bash
-go get gorm.io/driver/sqlite@none
-go get github.com/mattn/go-sqlite3@none
- 
-# Remove gorm entirely if not using it
-go get gorm.io/gorm@none
- 
-go mod tidy
-```
- 
-**Then add your own database driver:**
- 
-| Database | Command |
-|----------|---------|
-| PostgreSQL (GORM) | `go get gorm.io/driver/postgres` |
-| MySQL (GORM) | `go get gorm.io/driver/mysql` |
-| PostgreSQL (raw) | `go get github.com/jackc/pgx/v5` |
-| MongoDB | `go get go.mongodb.org/mongo-driver/mongo` |
- 
----
- 
+
 ## 📦 Dependencies
- 
+
 | Package | Purpose |
 |---------|---------|
-| `gorm.io/gorm` | ORM |
-| `gorm.io/driver/sqlite` | SQLite driver |
-| `github.com/mattn/go-sqlite3` | SQLite CGO bindings |
 | `github.com/spf13/viper` | Config management |
-| `github.com/joho/godotenv` | `.env` file loading |
- 
+| `github.com/joho/godotenv` | `.env` loading for local dev |
+
 ---
- 
+
 ## 📝 License
- 
-This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
+
+MIT. See [LICENSE](./LICENSE).
