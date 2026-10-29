@@ -1,38 +1,34 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 
-	"github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template/internal/adapters/repository/sqliter"
 	"github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template/internal/config"
-	"github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template/internal/core/domain/model"
-	"github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template/internal/core/service"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"github.com/Mrf-LuckyBoy/go-hexagonal-minimal-template/internal/platform/lifecycle"
 )
 
-type Container struct{}
+// BuildApp wires adapters -> services -> driving adapters and registers them
+// with the application lifecycle. This is the only place that knows about
+// concrete implementations. See the README "Recipes" section for examples.
+func BuildApp(cfg *config.Config, logger *slog.Logger) (*lifecycle.App, error) {
+	app := lifecycle.New(logger, cfg.App.ShutdownTimeout)
 
-func BuildContainer(cfg *config.Config) *Container {
-	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
-	if err != nil {
-		panic("Fail to connect database")
-	}
+	// 1. Driven adapters: databases, caches, object storage, external APIs.
+	//    Register cleanup right after creating each one:
+	//
+	//	rdb, err := redisadapter.NewClient(cfg.Redis)
+	//	if err != nil { return nil, err }
+	//	app.OnStop("redis", func(context.Context) error { return rdb.Close() })
+	//	cache := redisadapter.NewCache(rdb)
 
-	fmt.Println("Connected to database")
+	// 2. Services: business logic built from driven ports.
+	//
+	//	orderService := service.NewOrderService(orderRepository, cache)
 
-	err = db.AutoMigrate(&model.Book{})
-	if err != nil {
-		panic("Fail to migratetion")
-	}
+	// 3. Driving adapters: HTTP/gRPC servers, consumers, schedulers.
+	//
+	//	router := ginhandler.NewRouter(orderService)
+	//	app.AddServer("http", lifecycle.NewHTTPServer(":8080", router, 30*time.Second))
 
-	// repository
-	bookRepository := sqliter.NewBookRepositorySqlite(db)
-
-	// service
-	bookService := service.NewBookService(bookRepository)
-
-	fmt.Println(bookService)
-
-	return nil
+	return app, nil
 }
